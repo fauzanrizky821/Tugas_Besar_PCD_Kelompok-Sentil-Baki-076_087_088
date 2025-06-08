@@ -1,0 +1,321 @@
+import streamlit as st
+import cv2
+import mediapipe as mp
+import numpy as np
+import tensorflow as tf
+import pandas as pd
+import os
+import pickle
+from PIL import Image
+import sys
+import time
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Add 01_Mediapipe_Eksplorasi to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../01_Mediapipe_Eksplorasi')))
+try:
+    from train import train_model
+    from preprocessing import preprocess_all_datasets, normalize_and_split_data
+except ImportError as e:
+    st.error(f"Error importing modules: {e}")
+    st.stop()
+
+# Initialize MediaPipe
+mp_face = mp.solutions.face_mesh
+mp_face_mesh = mp_face.FaceMesh(static_image_mode=False, max_num_faces=1, min_detection_confidence=0.5)
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
+
+
+@st.cache_resource
+def load_model_and_encoders(model_path, encoder_dir):
+    try:
+        if not os.path.exists(model_path):
+            st.error(f"Model file not found: {model_path}")
+            return None, None, None, None
+        model = tf.keras.models.load_model(model_path)
+        with open(os.path.join(encoder_dir, 'le_age.pkl'), 'rb') as f:
+            le_age = pickle.load(f)
+        with open(os.path.join(encoder_dir, 'le_expression.pkl'), 'rb') as f:
+            le_expression = pickle.load(f)
+        with open(os.path.join(encoder_dir, 'le_gender.pkl'), 'rb') as f:
+            le_gender = pickle.load(f)
+        return model, le_age, le_expression, le_gender
+    except Exception as e:
+        st.error(f"Error loading model or encoders: {e}")
+        return None, None, None, None
+
+
+def extract_landmarks(image, mp_face_mesh):
+    """Extract 468 face landmarks from an image."""
+    try:
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        results = mp_face_mesh.process(image_rgb)
+
+        if results.multi_face_landmarks:
+            landmarks = results.multi_face_landmarks[0].landmark
+            landmark_vector = []
+            for lm in landmarks:
+                landmark_vector.extend([lm.x, lm.y, lm.z])
+            return np.array(landmark_vector), results.multi_face_landmarks[0]
+        return None, None
+    except Exception as e:
+        logger.error(f"Error extracting landmarks: {str(e)}")
+        return None, None
+
+
+def get_bounding_box(image, face_landmarks):
+    """Calculate bounding box from landmarks."""
+    if not face_landmarks or not face_landmarks.landmark:
+        return None
+    h, w = image.shape[:2]
+    x_coords = [lm.x * w for lm in face_landmarks.landmark]
+    y_coords = [lm.y * h for lm in face_landmarks.landmark]
+    x_min, x_max = int(min(x_coords)), int(max(x_coords))
+    y_min, y_max = int(min(y_coords)), int(max(y_coords))
+    padding = 20
+    x_min = max(0, x_min - padding)
+    x_max = min(w, x_max + padding)
+    y_min = max(0, y_min - padding)
+    y_max = min(h, y_max + padding)
+    return x_min, y_min, x_max, y_max
+
+
+def real_time_detection():
+    st.header("Real-Time Face Analysis")
+    st.write("Click the button to start/stop webcam for real-time detection.")
+
+    model_path = '../01_Mediapipe_Eksplorasi/Model/model.h5'
+    encoder_dir = '../Dataset/Model_Output'
+    model, le_age, le_expression, le_gender = load_model_and_encoders(model_path, encoder_dir)
+    if model is None:
+        return
+
+    # Load normalization parameters
+    processed_csv = '../Dataset/CSV/Processed/processed_dataset.csv'
+    if os.path.exists(processed_csv):
+        df = pd.read_csv(processed_csv)
+        mean = df.iloc[:, :-3].values.mean(axis=0)
+        std = df.iloc[:, :-3].values.std(axis=0)
+    else:
+        st.error("Processed dataset not found for normalization.")
+        return
+
+    if 'webcam_active' not in st.session_state:
+        st.session_state.webcam_active = False
+
+    if st.button("Start/Stop Webcam"):
+        st.session_state.webcam_active = not st.session_state.webcam_active
+
+    frame_placeholder = st.empty()
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        st.error("Could not open webcam.")
+        return
+
+    while st.session_state.webcam_active:
+        ret, frame = cap.read()
+        if not ret:
+            st.error("Failed to capture video frame.")
+            break
+
+        landmarks, face_landmarks = extract_landmarks(frame, mp_face_mesh)
+
+        if landmarks is not None:
+            landmarks = (landmarks - mean) / std
+            landmarks = landmarks.reshape(1, -1)
+
+            age_pred, exp_pred, gen_pred = model.predict(landmarks, verbose=0)
+            age_label = le_age.inverse_transform([np.argmax(age_pred, axis=1)[0]])[0]
+            exp_label = le_expression.inverse_transform([np.argmax(exp_pred, axis=1)[0]])[0]
+            gen_label = le_gender.inverse_transform([np.argmax(gen_pred, axis=1)[0]])[0]
+
+            bbox = get_bounding_box(frame, face_landmarks)
+            if bbox:
+                x_min, y_min, x_max, y_max = bbox
+                cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+                cv2.putText(frame, f"Age: {age_label}", (x_min, y_min - 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0),
+                            2)
+                cv2.putText(frame, f"Expression: {exp_label}", (x_min, y_min - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                            (0, 255, 0), 2)
+                cv2.putText(frame, f"Gender: {gen_label}", (x_min, y_min - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                            (0, 255, 0), 2)
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_placeholder.image(frame_rgb, channels="RGB", use_column_width=True)
+
+    cap.release()
+
+
+def add_dataset():
+    st.header("Add New Dataset")
+    st.write("Capture an image from the webcam or upload an image, then provide labels to add to the dataset.")
+
+    capture_method = st.radio("Choose capture method:", ("Webcam", "Upload Image"))
+
+    image = None
+    if capture_method == "Webcam":
+        if st.button("Capture Image"):
+            cap = cv2.VideoCapture(0)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret:
+                    image = frame
+                    st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), caption="Captured Image", use_column_width=True)
+                cap.release()
+            else:
+                st.error("Could not open webcam.")
+    else:
+        uploaded_file = st.file_uploader("Upload an image", type=["jpg", "png"])
+        if uploaded_file:
+            image = np.array(Image.open(uploaded_file))
+            st.image(image, caption="Uploaded Image", use_column_width=True)
+
+    if image is not None:
+        age_label = st.selectbox("Age Label", ["YOUNG", "MIDDLE", "OLD"])
+        expression_label = st.selectbox("Expression Label", ["HAPPY", "SAD", "ANGRY", "NEUTRAL"])
+        gender_label = st.selectbox("Gender Label", ["MALE", "FEMALE"])
+
+        if st.button("Save to Dataset"):
+            landmarks, _ = extract_landmarks(image, mp_face_mesh)
+            if landmarks is not None:
+                landmark_columns = [f"{coord}{i + 1}" for i in range(468) for coord in ['x', 'y', 'z']]
+                data = landmarks.tolist() + [age_label, expression_label, gender_label]
+                df = pd.DataFrame([data], columns=landmark_columns + ['age_label', 'expression_label', 'gender_label'])
+
+                output_csv = '../Dataset/CSV/Processed/captured_processed_dataset.csv'
+                os.makedirs(os.path.dirname(output_csv), exist_ok=True)
+                if os.path.exists(output_csv):
+                    df.to_csv(output_csv, mode='a', header=False, index=False)
+                else:
+                    df.to_csv(output_csv, index=False)
+                st.success(f"Data saved to {output_csv}")
+            else:
+                st.error("No face detected in the image.")
+
+
+def train_model_page():
+    st.header("Train Model")
+    st.write("Train the model using processed_dataset.csv and captured_processed_dataset.csv.")
+
+    if st.button("Start Training"):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        batch_text = st.empty()
+
+        class TrainingCallback(tf.keras.callbacks.Callback):
+            def on_epoch_begin(self, epoch, logs=None):
+                self.epoch_start_time = time.time()
+                status_text.text(f"Epoch {epoch + 1}/{self.params['epochs']} - Starting...")
+
+            def on_batch_end(self, batch, logs=None):
+                batch_text.text(f"Batch {batch + 1}/{self.params['steps']} - Loss: {logs['loss']:.4f}")
+
+            def on_epoch_end(self, epoch, logs=None):
+                progress = (epoch + 1) / self.params['epochs']
+                progress_bar.progress(min(progress, 1.0))
+                elapsed_time = time.time() - self.epoch_start_time
+                status_text.text(
+                    f"Epoch {epoch + 1}/{self.params['epochs']} - "
+                    f"Loss: {logs['loss']:.4f}, Val Loss: {logs['val_loss']:.4f}, "
+                    f"Time: {elapsed_time:.2f}s"
+                )
+
+        history = train_model(
+            '../Dataset/CSV/Processed',
+            '../01_Mediapipe_Eksplorasi/Model',
+            epochs=50,
+            batch_size=32,
+            callbacks=[TrainingCallback()]
+        )
+
+        if history:
+            st.success("Training completed!")
+            st.write("### Training History")
+            st.line_chart({
+                'Loss': history.history['loss'],
+                'Validation Loss': history.history['val_loss'],
+                'Age Accuracy': history.history['age_output_accuracy'],
+                'Expression Accuracy': history.history['exp_output_accuracy'],
+                'Gender Accuracy': history.history['gen_output_accuracy']
+            })
+        else:
+            st.error("Training failed. Check dataset files.")
+
+
+def preprocess_page():
+    st.header("Preprocess Datasets")
+    st.write("Process all CSV files in Dataset/CSV/Raw/ and save to Dataset/CSV/Processed/processed_dataset.csv.")
+
+    if st.button("Start Preprocessing"):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        # Create a log container
+        log_container = st.empty()
+        log_buffer = []
+
+        # Custom logging handler to capture logs in Streamlit
+        class StreamlitHandler(logging.Handler):
+            def emit(self, record):
+                msg = self.format(record)
+                log_buffer.append(msg)
+                log_container.text_area("Preprocessing Logs", "\n".join(log_buffer), height=200)
+
+        # Configure logging to Streamlit
+        handler = StreamlitHandler()
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logger.addHandler(handler)
+
+        try:
+            raw_csv_dir = '../Dataset/CSV/Raw'
+            image_dir = '../Dataset/Image'
+            output_csv = '../Dataset/CSV/Processed/processed_dataset.csv'
+            output_dir = '../Dataset/Model_Output'
+
+            # Process CSVs
+            logger.info("Starting preprocessing of CSV files...")
+            preprocess_all_datasets(raw_csv_dir, image_dir, output_csv)
+
+            # Update progress
+            progress_bar.progress(0.5)
+            logger.info("Preprocessing complete. Normalizing and splitting data...")
+
+            # Normalize and split
+            normalize_and_split_data(output_csv, output_dir)
+
+            progress_bar.progress(1.0)
+            st.success(f"Preprocessing completed! Data saved to {output_csv} and splits saved to {output_dir}")
+
+        except Exception as e:
+            logger.error(f"Error during preprocessing: {str(e)}")
+            st.error(f"Error during preprocessing: {str(e)}")
+
+        finally:
+            logger.removeHandler(handler)
+
+
+def main():
+    st.title("Facial Analysis System")
+    st.sidebar.title("Navigation")
+    page = st.sidebar.selectbox("Choose a page",
+                                ["Real-Time Detection", "Add Dataset", "Train Model", "Preprocess Datasets"])
+
+    if page == "Real-Time Detection":
+        real_time_detection()
+    elif page == "Add Dataset":
+        add_dataset()
+    elif page == "Train Model":
+        train_model_page()
+    elif page == "Preprocess Datasets":
+        preprocess_page()
+
+    mp_face_mesh.close()
+
+
+if __name__ == "__main__":
+    main()
