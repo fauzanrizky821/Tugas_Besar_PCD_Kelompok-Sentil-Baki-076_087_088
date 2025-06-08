@@ -1,0 +1,44 @@
+     # Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.env
+.venv
+
+# IDEs
+.vscode/
+.idea/
+
+# Datasets
+Dataset/Image/*
+!Dataset/Image/.gitkeep
+Dataset/CSV/Raw/*
+!Dataset/CSV/Raw/.gitkeep
+Dataset/CSV/Processed/*
+!Dataset/CSV/Processed/.gitkeep
+Dataset/Model_Output/*
+!Dataset/Model_Output/.gitkeep
+
+# Model and evaluation outputs
+01_Mediapipe_Eksplorasi/Model/*
+!01_Mediapipe_Eksplorasi/Model/.gitkeep
+01_Mediapipe_Eksplorasi/Evaluasi/*
+!01_Mediapipe_Eksplorasi/Evaluasi/.gitkeep
+
+# Documentation
+03_Dokumen_Proses_Analisis.pdf
+04_File_Presentasi.pptx
+
+# Misc
+*.log
+*.tmp
+*.bak
