@@ -20,6 +20,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../01_M
 try:
     from train import train_model
     from preprocessing import preprocess_all_datasets, normalize_and_split_data
+    from evaluate import evaluate_model
 except ImportError as e:
     st.error(f"Error importing modules: {e}")
     st.stop()
@@ -183,6 +184,14 @@ def add_dataset():
         if st.button("Save to Dataset"):
             landmarks, _ = extract_landmarks(image, mp_face_mesh)
             if landmarks is not None:
+                processed_csv = '../Dataset/CSV/Processed/processed_dataset.csv'
+                if os.path.exists(processed_csv):
+                    df_norm = pd.read_csv(processed_csv)
+                    mean = df_norm.iloc[:, :-3].values.mean(axis=0)
+                    std = df_norm.iloc[:, :-3].values.std(axis=0)
+                    landmarks = (landmarks - mean) / std
+                else:
+                    st.warning("Processed dataset not found. Using raw landmarks.")
                 landmark_columns = [f"{coord}{i + 1}" for i in range(468) for coord in ['x', 'y', 'z']]
                 data = landmarks.tolist() + [age_label, expression_label, gender_label]
                 df = pd.DataFrame([data], columns=landmark_columns + ['age_label', 'expression_label', 'gender_label'])
@@ -225,6 +234,7 @@ def train_model_page():
                     f"Time: {elapsed_time:.2f}s"
                 )
 
+        # Train model
         history = train_model(
             '../Dataset/CSV/Processed',
             '../01_Mediapipe_Eksplorasi/Model',
@@ -243,8 +253,39 @@ def train_model_page():
                 'Expression Accuracy': history.history['exp_output_accuracy'],
                 'Gender Accuracy': history.history['gen_output_accuracy']
             })
+
+            # Evaluate model and display confusion matrices
+            st.write("### Confusion Matrices")
+            evaluation_results = evaluate_model(
+                '../01_Mediapipe_Eksplorasi/Model/model.h5',
+                '../Dataset/Model_Output',
+                '../01_Mediapipe_Eksplorasi/Evaluasi'
+            )
+
+            if evaluation_results:
+                st.success("Evaluation completed! Displaying confusion matrices...")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if os.path.exists(evaluation_results['cm_age']):
+                        st.image(evaluation_results['cm_age'], caption="Confusion Matrix - Age", use_column_width=True)
+                    else:
+                        st.error(f"Age confusion matrix not found: {evaluation_results['cm_age']}")
+                with col2:
+                    if os.path.exists(evaluation_results['cm_expression']):
+                        st.image(evaluation_results['cm_expression'], caption="Confusion Matrix - Expression",
+                                 use_column_width=True)
+                    else:
+                        st.error(f"Expression confusion matrix not found: {evaluation_results['cm_expression']}")
+                with col3:
+                    if os.path.exists(evaluation_results['cm_gender']):
+                        st.image(evaluation_results['cm_gender'], caption="Confusion Matrix - Gender",
+                                 use_column_width=True)
+                    else:
+                        st.error(f"Gender confusion matrix not found: {evaluation_results['cm_gender']}")
+            else:
+                st.error("Evaluation failed. Check dataset files or logs.")
         else:
-            st.error("Training failed. Check dataset files.")
+            st.error("Training failed. Check dataset files or logs.")
 
 
 def preprocess_page():
@@ -255,16 +296,25 @@ def preprocess_page():
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        # Create a log container
+        # Create a log container and summary placeholder
         log_container = st.empty()
+        summary_placeholder = st.empty()
         log_buffer = []
 
-        # Custom logging handler to capture logs in Streamlit
+        # Custom logging handler to capture logs and summary
         class StreamlitHandler(logging.Handler):
+            def __init__(self):
+                super().__init__()
+                self.summary = None
+
             def emit(self, record):
                 msg = self.format(record)
                 log_buffer.append(msg)
-                log_container.text_area("Preprocessing Logs", "\n".join(log_buffer), height=200)
+                log_container.text_area("Preprocessing Logs", "\n".join(log_buffer), height=300)
+                # Capture summary log
+                if "Preprocessing Summary" in msg:
+                    self.summary = msg.split(" - INFO - ")[-1]
+                    summary_placeholder.info(f"**Preprocessing Summary**\n\n{self.summary}")
 
         # Configure logging to Streamlit
         handler = StreamlitHandler()
@@ -276,6 +326,11 @@ def preprocess_page():
             image_dir = '../Dataset/Image'
             output_csv = '../Dataset/CSV/Processed/processed_dataset.csv'
             output_dir = '../Dataset/Model_Output'
+
+            if not os.path.exists(raw_csv_dir) or not os.path.exists(image_dir):
+                st.error(f"Required directories not found: {raw_csv_dir} or {image_dir}")
+                logger.error(f"Required directories not found: {raw_csv_dir} or {image_dir}")
+                return
 
             # Process CSVs
             logger.info("Starting preprocessing of CSV files...")

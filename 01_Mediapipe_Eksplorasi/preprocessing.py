@@ -34,7 +34,6 @@ def extract_landmarks(image_path, mp_face_mesh):
         logger.error(f"Error processing image {image_path}: {str(e)}")
         return None
     finally:
-        # Ensure image resources are released
         if 'image' in locals():
             del image
 
@@ -60,6 +59,9 @@ def preprocess_all_datasets(raw_csv_dir, image_dir, output_csv):
     landmark_columns = [f"{coord}{i + 1}" for i in range(468) for coord in ['x', 'y', 'z']]
     columns = landmark_columns + ['age_label', 'expression_label', 'gender_label']
 
+    # Track processing statistics
+    stats = {'processed': 0, 'no_landmarks': 0, 'not_found': 0, 'total': 0}
+
     # Find all CSV files
     csv_files = glob.glob(os.path.join(raw_csv_dir, "*.csv"))
     if not csv_files:
@@ -69,7 +71,6 @@ def preprocess_all_datasets(raw_csv_dir, image_dir, output_csv):
     for csv_file in csv_files:
         logger.info(f"Processing {csv_file}...")
         try:
-            # Validate file access
             if not os.access(csv_file, os.R_OK):
                 logger.error(f"No read permission for {csv_file}")
                 continue
@@ -83,24 +84,31 @@ def preprocess_all_datasets(raw_csv_dir, image_dir, output_csv):
                     f"{csv_file} missing expected columns. Expected: {expected_columns}, Found: {list(df.columns)}")
                 continue
 
-            # Validate CSV is not empty
             if df.empty:
                 logger.error(f"{csv_file} is empty")
                 continue
 
+            stats['total'] += len(df)
+
             # Process each image
             for _, row in tqdm(df.iterrows(), total=len(df),
                                desc=f"Extracting landmarks from {os.path.basename(csv_file)}"):
+                # Try both .jpg and .png extensions
                 image_path = os.path.join(image_dir, f"{row['ID']}.jpg")
                 if not os.path.exists(image_path):
+                    image_path = os.path.join(image_dir, f"{row['ID']}.png")
+                if not os.path.exists(image_path):
                     logger.warning(f"Image not found: {image_path}")
+                    stats['not_found'] += 1
                     continue
+
                 landmarks = extract_landmarks(image_path, mp_face_mesh)
 
                 if landmarks:
                     data.append(landmarks + [row['AGE'], row['EXPRESSION'], row['GENDER']])
+                    stats['processed'] += 1
                 else:
-                    logger.warning(f"No landmarks detected for {image_path}")
+                    stats['no_landmarks'] += 1
 
         except Exception as e:
             logger.error(f"Error processing {csv_file}: {str(e)}")
@@ -114,6 +122,13 @@ def preprocess_all_datasets(raw_csv_dir, image_dir, output_csv):
         logger.info(f"Processed data saved to {output_csv}")
     else:
         logger.error("No valid data processed.")
+
+    # Log summary
+    logger.info(
+        f"Preprocessing Summary: Total entries={stats['total']}, "
+        f"Processed={stats['processed']}, No landmarks={stats['no_landmarks']}, "
+        f"Not found={stats['not_found']}"
+    )
 
     # Clean up MediaPipe resources
     if mp_face_mesh:
@@ -133,7 +148,7 @@ def normalize_and_split_data(csv_path, output_dir, val_split=0.2, test_split=0.1
         y_expression = df['expression_label'].values
         y_gender = df['gender_label'].values
 
-        X = (X - X.mean(axis=0)) / X.std(0)
+        X = (X - X.mean(axis=0)) / X.std(axis=0)
 
         from sklearn.preprocessing import LabelEncoder
         le_age = LabelEncoder()
@@ -174,7 +189,7 @@ def normalize_and_split_data(csv_path, output_dir, val_split=0.2, test_split=0.1
         with open(os.path.join(output_dir, 'le_gender.pkl'), 'wb') as f:
             pickle.dump(le_gender, f)
 
-        logger.info(f"Normalized data and splitsMolly saved to {output_dir}")
+        logger.info(f"Normalized data and splits saved to {output_dir}")
     except Exception as e:
         logger.error(f"Error in normalization and splitting: {str(e)}")
 
