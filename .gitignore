@@ -25,8 +25,8 @@ Dataset/CSV/Raw/*
 !Dataset/CSV/Raw/.gitkeep
 Dataset/CSV/Processed/*
 !Dataset/CSV/Processed/.gitkeep
-Dataset/Model_Output/*
-!Dataset/Model_Output/.gitkeep
+Dataset/Training_Data/*
+!Dataset/Training_Data/.gitkeep
 
 # Model and evaluation outputs
 01_Mediapipe_Eksplorasi/Model/*
