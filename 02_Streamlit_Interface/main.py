@@ -85,6 +85,7 @@ def get_bounding_box(image, face_landmarks):
     y_max = min(h, y_max + padding)
     return x_min, y_min, x_max, y_max
 
+
 def home_page():
     """Display the homepage with application explanation and workflow."""
     st.title("Selamat Datang di Sistem Analisis Wajah")
@@ -127,12 +128,10 @@ def home_page():
 
         ### Catatan Penting
         - Pastikan folder `Dataset/Image/` berisi gambar yang sesuai dengan ID di `dataset.csv`.
-        - Proses pelatihan membutuhkan data yang cukup (misalnya, 348 entri seperti hasil pratinjau sebelumnya).
         - Jika terjadi error, periksa log di halaman **Pratinjau Dataset** atau pastikan semua dependensi terinstall 
           (`requirements.txt`).
         - Untuk hasil optimal, gunakan gambar wajah dengan pencahayaan baik dan tanpa penghalang.
 
-        **Mulai sekarang dengan menavigasi ke halaman "Tambah Dataset" melalui menu di sisi kiri!**
     """)
 
 
@@ -379,6 +378,23 @@ def real_time_detection():
         landmarks, face_landmarks = extract_landmarks(frame, mp_face_mesh)
 
         if landmarks is not None:
+            # Draw face landmarks
+            mp_drawing.draw_landmarks(
+                image=frame,
+                landmark_list=face_landmarks,
+                connections=mp_face.FACEMESH_TESSELATION,
+                landmark_drawing_spec=None,
+                connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style()
+            )
+            mp_drawing.draw_landmarks(
+                image=frame,
+                landmark_list=face_landmarks,
+                connections=mp_face.FACEMESH_CONTOURS,
+                landmark_drawing_spec=None,
+                connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_contours_style()
+            )
+
+            # Normalize landmarks and predict
             landmarks = (landmarks - mean) / std
             landmarks = landmarks.reshape(1, -1)
 
@@ -408,7 +424,7 @@ def main():
     st.title("Facial Analysis System")
     st.sidebar.title("Navigation")
     page = st.sidebar.selectbox("Choose a page",
-                                ["Home", "Add Dataset",  "Preprocess Datasets", "Train Model", "Real-Time Detection"])
+                                ["Home", "Add Dataset", "Preprocess Datasets", "Train Model", "Real-Time Detection"])
 
     if page == "Home":
         home_page()
