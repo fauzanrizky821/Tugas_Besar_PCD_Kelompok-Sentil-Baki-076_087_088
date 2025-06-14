@@ -98,6 +98,8 @@ def preprocess_all_datasets(raw_csv_dir, image_dir, output_csv):
                 if not os.path.exists(image_path):
                     image_path = os.path.join(image_dir, f"{row['ID']}.png")
                 if not os.path.exists(image_path):
+                    image_path = os.path.join(image_dir, f"{row['ID']}.jpeg")
+                if not os.path.exists(image_path):
                     logger.warning(f"Image not found: {image_path}")
                     stats['not_found'] += 1
                     continue
