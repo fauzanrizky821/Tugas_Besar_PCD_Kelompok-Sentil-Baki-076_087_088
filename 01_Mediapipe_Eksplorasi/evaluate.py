@@ -93,6 +93,6 @@ def evaluate_model(model_path, data_dir, output_dir):
 if __name__ == "__main__":
     evaluate_model(
         '../01_Mediapipe_Eksplorasi/Model/model.h5',
-        '../Dataset/Model_Output',
+        '../Dataset/Training_Data',
         '../01_Mediapipe_Eksplorasi/Evaluasi'
     )

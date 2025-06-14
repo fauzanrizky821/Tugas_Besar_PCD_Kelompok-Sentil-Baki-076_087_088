@@ -83,4 +83,4 @@ def train_model(data_dir, output_dir, epochs=50, batch_size=32, callbacks=None):
 
 
 if __name__ == "__main__":
-    train_model('../Dataset/CSV/Processed', '../01_Mediapipe_Eksplorasi/Model')
+    train_model('../Dataset/Training_Data', '../01_Mediapipe_Eksplorasi/Model')

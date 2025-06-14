@@ -85,13 +85,265 @@ def get_bounding_box(image, face_landmarks):
     y_max = min(h, y_max + padding)
     return x_min, y_min, x_max, y_max
 
+def home_page():
+    """Display the homepage with application explanation and workflow."""
+    st.title("Selamat Datang di Sistem Analisis Wajah")
+    st.markdown("""
+        ### Tentang Aplikasi
+        Sistem Analisis Wajah adalah aplikasi berbasis kecerdasan buatan yang dirancang untuk menganalisis gambar wajah 
+        menggunakan teknologi **MediaPipe Face Mesh** dan model pembelajaran mendalam (deep learning). Aplikasi ini mampu 
+        memprediksi **usia** (muda, menengah, tua), **ekspresi wajah** (senang, sedih, marah, netral), serta **jenis kelamin** 
+        (pria, wanita) berdasarkan landmark wajah yang diekstraksi dari gambar.
+
+        Aplikasi ini cocok untuk keperluan akademik, penelitian, atau pengembangan teknologi pengenalan wajah. Anda dapat 
+        menambahkan dataset baru, memproses data, melatih model, dan melakukan analisis wajah secara real-time menggunakan 
+        webcam.
+
+        ### Alur Penggunaan Aplikasi
+        Untuk hasil terbaik, ikuti langkah-langkah berikut:
+        1. **Tambah Dataset (Add Dataset)**:
+           - Mulai dari halaman **Tambah Dataset** untuk menambahkan gambar wajah baru.
+           - Anda dapat mengambil gambar menggunakan webcam atau mengunggah file gambar (.jpg atau .png).
+           - Berikan label untuk usia, ekspresi, dan jenis kelamin, lalu simpan ke dataset.
+           - Data akan disimpan di `captured_processed_dataset.csv` untuk digunakan dalam pelatihan.
+
+        2. **Pratinjau Dataset (Preprocess Datasets)**:
+           - Kunjungi halaman **Pratinjau Dataset** untuk memproses file CSV di `Dataset/CSV/Raw/` (misalnya, `dataset.csv`).
+           - Proses ini akan mengekstraksi landmark wajah dari gambar di `Dataset/Image/` dan menyimpan hasilnya di 
+             `processed_dataset.csv`.
+           - Data juga akan dinormalisasi dan dibagi menjadi set pelatihan, validasi, dan pengujian, disimpan di 
+             `Dataset/Training_Data/`.
+
+        3. **Latih Model (Train Model)**:
+           - Buka halaman **Latih Model** untuk melatih model menggunakan data yang telah diproses.
+           - Pantau proses pelatihan melalui grafik loss dan akurasi, serta lihat matriks kebingungan (confusion matrix) 
+             untuk mengevaluasi performa model pada usia, ekspresi, dan jenis kelamin.
+           - Model yang dilatih akan disimpan di `01_Mediapipe_Eksplorasi/Model/model.h5`.
+
+        4. **Analisis Wajah Real-Time (Real-Time Detection)**:
+           - Setelah model dilatih, gunakan halaman **Analisis Wajah Real-Time** untuk memprediksi usia, ekspresi, dan 
+             jenis kelamin secara langsung melalui webcam.
+           - Hasil prediksi akan ditampilkan pada kotak pembatas (bounding box) di sekitar wajah yang terdeteksi.
+
+        ### Catatan Penting
+        - Pastikan folder `Dataset/Image/` berisi gambar yang sesuai dengan ID di `dataset.csv`.
+        - Proses pelatihan membutuhkan data yang cukup (misalnya, 348 entri seperti hasil pratinjau sebelumnya).
+        - Jika terjadi error, periksa log di halaman **Pratinjau Dataset** atau pastikan semua dependensi terinstall 
+          (`requirements.txt`).
+        - Untuk hasil optimal, gunakan gambar wajah dengan pencahayaan baik dan tanpa penghalang.
+
+        **Mulai sekarang dengan menavigasi ke halaman "Tambah Dataset" melalui menu di sisi kiri!**
+    """)
+
+
+def add_dataset():
+    st.header("Add New Dataset")
+    st.write("Capture an image from the webcam or upload an image, then provide labels to add to the dataset.")
+
+    capture_method = st.radio("Choose capture method:", ("Webcam", "Upload Image"))
+
+    image = None
+    if capture_method == "Webcam":
+        if st.button("Capture Image"):
+            cap = cv2.VideoCapture(0)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret:
+                    image = frame
+                    st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), caption="Captured Image", use_column_width=True)
+                cap.release()
+            else:
+                st.error("Could not open webcam.")
+    else:
+        uploaded_file = st.file_uploader("Upload an image", type=["jpg", "png"])
+        if uploaded_file:
+            image = np.array(Image.open(uploaded_file))
+            st.image(image, caption="Uploaded Image", use_column_width=True)
+
+    if image is not None:
+        age_label = st.selectbox("Age Label", ["YOUNG", "MIDDLE", "OLD"])
+        expression_label = st.selectbox("Expression Label", ["HAPPY", "SAD", "ANGRY", "NEUTRAL"])
+        gender_label = st.selectbox("Gender Label", ["MALE", "FEMALE"])
+
+        if st.button("Save to Dataset"):
+            landmarks, _ = extract_landmarks(image, mp_face_mesh)
+            if landmarks is not None:
+                processed_csv = '../Dataset/CSV/Processed/processed_dataset.csv'
+                if os.path.exists(processed_csv):
+                    df_norm = pd.read_csv(processed_csv)
+                    mean = df_norm.iloc[:, :-3].values.mean(axis=0)
+                    std = df_norm.iloc[:, :-3].values.std(axis=0)
+                    landmarks = (landmarks - mean) / std
+                else:
+                    st.warning("Processed dataset not found. Using raw landmarks.")
+                landmark_columns = [f"{coord}{i + 1}" for i in range(468) for coord in ['x', 'y', 'z']]
+                data = landmarks.tolist() + [age_label, expression_label, gender_label]
+                df = pd.DataFrame([data], columns=landmark_columns + ['age_label', 'expression_label', 'gender_label'])
+
+                output_csv = '../Dataset/CSV/Processed/captured_processed_dataset.csv'
+                os.makedirs(os.path.dirname(output_csv), exist_ok=True)
+                if os.path.exists(output_csv):
+                    df.to_csv(output_csv, mode='a', header=False, index=False)
+                else:
+                    df.to_csv(output_csv, index=False)
+                st.success(f"Data saved to {output_csv}")
+            else:
+                st.error("No face detected in the image.")
+
+
+def preprocess_page():
+    st.header("Preprocess Datasets")
+    st.write("Process all CSV files in Dataset/CSV/Raw/ and save to Dataset/CSV/Processed/processed_dataset.csv.")
+
+    if st.button("Start Preprocessing"):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        # Create a log container and summary placeholder
+        log_container = st.empty()
+        summary_placeholder = st.empty()
+        log_buffer = []
+
+        # Custom logging handler to capture logs and summary
+        class StreamlitHandler(logging.Handler):
+            def __init__(self):
+                super().__init__()
+                self.summary = None
+
+            def emit(self, record):
+                msg = self.format(record)
+                log_buffer.append(msg)
+                log_container.text_area("Preprocessing Logs", "\n".join(log_buffer), height=300)
+                # Capture summary log
+                if "Preprocessing Summary" in msg:
+                    self.summary = msg.split(" - INFO - ")[-1]
+                    summary_placeholder.info(f"**Preprocessing Summary**\n\n{self.summary}")
+
+        # Configure logging to Streamlit
+        handler = StreamlitHandler()
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logger.addHandler(handler)
+
+        try:
+            raw_csv_dir = '../Dataset/CSV/Raw'
+            image_dir = '../Dataset/Image'
+            output_csv = '../Dataset/CSV/Processed/processed_dataset.csv'
+            output_dir = '../Dataset/Training_Data'
+
+            if not os.path.exists(raw_csv_dir) or not os.path.exists(image_dir):
+                st.error(f"Required directories not found: {raw_csv_dir} or {image_dir}")
+                logger.error(f"Required directories not found: {raw_csv_dir} or {image_dir}")
+                return
+
+            # Process CSVs
+            logger.info("Starting preprocessing of CSV files...")
+            preprocess_all_datasets(raw_csv_dir, image_dir, output_csv)
+
+            # Update progress
+            progress_bar.progress(0.5)
+            logger.info("Preprocessing complete. Normalizing and splitting data...")
+
+            # Normalize and split
+            normalize_and_split_data(output_csv, output_dir)
+
+            progress_bar.progress(1.0)
+            st.success(f"Preprocessing completed! Data saved to {output_csv} and splits saved to {output_dir}")
+
+        except Exception as e:
+            logger.error(f"Error during preprocessing: {str(e)}")
+            st.error(f"Error during preprocessing: {str(e)}")
+
+        finally:
+            logger.removeHandler(handler)
+
+
+def train_model_page():
+    st.header("Train Model")
+    st.write("Train the model using processed_dataset.csv and captured_processed_dataset.csv.")
+
+    if st.button("Start Training"):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        batch_text = st.empty()
+
+        class TrainingCallback(tf.keras.callbacks.Callback):
+            def on_epoch_begin(self, epoch, logs=None):
+                self.epoch_start_time = time.time()
+                status_text.text(f"Epoch {epoch + 1}/{self.params['epochs']} - Starting...")
+
+            def on_batch_end(self, batch, logs=None):
+                batch_text.text(f"Batch {batch + 1}/{self.params['steps']} - Loss: {logs['loss']:.4f}")
+
+            def on_epoch_end(self, epoch, logs=None):
+                progress = (epoch + 1) / self.params['epochs']
+                progress_bar.progress(min(progress, 1.0))
+                elapsed_time = time.time() - self.epoch_start_time
+                status_text.text(
+                    f"Epoch {epoch + 1}/{self.params['epochs']} - "
+                    f"Loss: {logs['loss']:.4f}, Val Loss: {logs['val_loss']:.4f}, "
+                    f"Time: {elapsed_time:.2f}s"
+                )
+
+        # Train model
+        history = train_model(
+            '../Dataset/CSV/Processed',
+            '../01_Mediapipe_Eksplorasi/Model',
+            epochs=50,
+            batch_size=32,
+            callbacks=[TrainingCallback()]
+        )
+
+        if history:
+            st.success("Training completed!")
+            st.write("### Training History")
+            st.line_chart({
+                'Loss': history.history['loss'],
+                'Validation Loss': history.history['val_loss'],
+                'Age Accuracy': history.history['age_output_accuracy'],
+                'Expression Accuracy': history.history['exp_output_accuracy'],
+                'Gender Accuracy': history.history['gen_output_accuracy']
+            })
+
+            # Evaluate model and display confusion matrices
+            st.write("### Confusion Matrices")
+            evaluation_results = evaluate_model(
+                '../01_Mediapipe_Eksplorasi/Model/model.h5',
+                '../Dataset/Training_Data',
+                '../01_Mediapipe_Eksplorasi/Evaluasi'
+            )
+
+            if evaluation_results:
+                st.success("Evaluation completed! Displaying confusion matrices...")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    if os.path.exists(evaluation_results['cm_age']):
+                        st.image(evaluation_results['cm_age'], caption="Confusion Matrix - Age", use_column_width=True)
+                    else:
+                        st.error(f"Age confusion matrix not found: {evaluation_results['cm_age']}")
+                with col2:
+                    if os.path.exists(evaluation_results['cm_expression']):
+                        st.image(evaluation_results['cm_expression'], caption="Confusion Matrix - Expression",
+                                 use_column_width=True)
+                    else:
+                        st.error(f"Expression confusion matrix not found: {evaluation_results['cm_expression']}")
+                with col3:
+                    if os.path.exists(evaluation_results['cm_gender']):
+                        st.image(evaluation_results['cm_gender'], caption="Confusion Matrix - Gender",
+                                 use_column_width=True)
+                    else:
+                        st.error(f"Gender confusion matrix not found: {evaluation_results['cm_gender']}")
+            else:
+                st.error("Evaluation failed. Check dataset files or logs.")
+        else:
+            st.error("Training failed. Check dataset files or logs.")
+
 
 def real_time_detection():
     st.header("Real-Time Face Analysis")
     st.write("Click the button to start/stop webcam for real-time detection.")
 
     model_path = '../01_Mediapipe_Eksplorasi/Model/model.h5'
-    encoder_dir = '../Dataset/Model_Output'
+    encoder_dir = '../Dataset/Training_Data'
     model, le_age, le_expression, le_gender = load_model_and_encoders(model_path, encoder_dir)
     if model is None:
         return
@@ -152,222 +404,22 @@ def real_time_detection():
     cap.release()
 
 
-def add_dataset():
-    st.header("Add New Dataset")
-    st.write("Capture an image from the webcam or upload an image, then provide labels to add to the dataset.")
-
-    capture_method = st.radio("Choose capture method:", ("Webcam", "Upload Image"))
-
-    image = None
-    if capture_method == "Webcam":
-        if st.button("Capture Image"):
-            cap = cv2.VideoCapture(0)
-            if cap.isOpened():
-                ret, frame = cap.read()
-                if ret:
-                    image = frame
-                    st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), caption="Captured Image", use_column_width=True)
-                cap.release()
-            else:
-                st.error("Could not open webcam.")
-    else:
-        uploaded_file = st.file_uploader("Upload an image", type=["jpg", "png"])
-        if uploaded_file:
-            image = np.array(Image.open(uploaded_file))
-            st.image(image, caption="Uploaded Image", use_column_width=True)
-
-    if image is not None:
-        age_label = st.selectbox("Age Label", ["YOUNG", "MIDDLE", "OLD"])
-        expression_label = st.selectbox("Expression Label", ["HAPPY", "SAD", "ANGRY", "NEUTRAL"])
-        gender_label = st.selectbox("Gender Label", ["MALE", "FEMALE"])
-
-        if st.button("Save to Dataset"):
-            landmarks, _ = extract_landmarks(image, mp_face_mesh)
-            if landmarks is not None:
-                processed_csv = '../Dataset/CSV/Processed/processed_dataset.csv'
-                if os.path.exists(processed_csv):
-                    df_norm = pd.read_csv(processed_csv)
-                    mean = df_norm.iloc[:, :-3].values.mean(axis=0)
-                    std = df_norm.iloc[:, :-3].values.std(axis=0)
-                    landmarks = (landmarks - mean) / std
-                else:
-                    st.warning("Processed dataset not found. Using raw landmarks.")
-                landmark_columns = [f"{coord}{i + 1}" for i in range(468) for coord in ['x', 'y', 'z']]
-                data = landmarks.tolist() + [age_label, expression_label, gender_label]
-                df = pd.DataFrame([data], columns=landmark_columns + ['age_label', 'expression_label', 'gender_label'])
-
-                output_csv = '../Dataset/CSV/Processed/captured_processed_dataset.csv'
-                os.makedirs(os.path.dirname(output_csv), exist_ok=True)
-                if os.path.exists(output_csv):
-                    df.to_csv(output_csv, mode='a', header=False, index=False)
-                else:
-                    df.to_csv(output_csv, index=False)
-                st.success(f"Data saved to {output_csv}")
-            else:
-                st.error("No face detected in the image.")
-
-
-def train_model_page():
-    st.header("Train Model")
-    st.write("Train the model using processed_dataset.csv and captured_processed_dataset.csv.")
-
-    if st.button("Start Training"):
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        batch_text = st.empty()
-
-        class TrainingCallback(tf.keras.callbacks.Callback):
-            def on_epoch_begin(self, epoch, logs=None):
-                self.epoch_start_time = time.time()
-                status_text.text(f"Epoch {epoch + 1}/{self.params['epochs']} - Starting...")
-
-            def on_batch_end(self, batch, logs=None):
-                batch_text.text(f"Batch {batch + 1}/{self.params['steps']} - Loss: {logs['loss']:.4f}")
-
-            def on_epoch_end(self, epoch, logs=None):
-                progress = (epoch + 1) / self.params['epochs']
-                progress_bar.progress(min(progress, 1.0))
-                elapsed_time = time.time() - self.epoch_start_time
-                status_text.text(
-                    f"Epoch {epoch + 1}/{self.params['epochs']} - "
-                    f"Loss: {logs['loss']:.4f}, Val Loss: {logs['val_loss']:.4f}, "
-                    f"Time: {elapsed_time:.2f}s"
-                )
-
-        # Train model
-        history = train_model(
-            '../Dataset/CSV/Processed',
-            '../01_Mediapipe_Eksplorasi/Model',
-            epochs=50,
-            batch_size=32,
-            callbacks=[TrainingCallback()]
-        )
-
-        if history:
-            st.success("Training completed!")
-            st.write("### Training History")
-            st.line_chart({
-                'Loss': history.history['loss'],
-                'Validation Loss': history.history['val_loss'],
-                'Age Accuracy': history.history['age_output_accuracy'],
-                'Expression Accuracy': history.history['exp_output_accuracy'],
-                'Gender Accuracy': history.history['gen_output_accuracy']
-            })
-
-            # Evaluate model and display confusion matrices
-            st.write("### Confusion Matrices")
-            evaluation_results = evaluate_model(
-                '../01_Mediapipe_Eksplorasi/Model/model.h5',
-                '../Dataset/Model_Output',
-                '../01_Mediapipe_Eksplorasi/Evaluasi'
-            )
-
-            if evaluation_results:
-                st.success("Evaluation completed! Displaying confusion matrices...")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if os.path.exists(evaluation_results['cm_age']):
-                        st.image(evaluation_results['cm_age'], caption="Confusion Matrix - Age", use_column_width=True)
-                    else:
-                        st.error(f"Age confusion matrix not found: {evaluation_results['cm_age']}")
-                with col2:
-                    if os.path.exists(evaluation_results['cm_expression']):
-                        st.image(evaluation_results['cm_expression'], caption="Confusion Matrix - Expression",
-                                 use_column_width=True)
-                    else:
-                        st.error(f"Expression confusion matrix not found: {evaluation_results['cm_expression']}")
-                with col3:
-                    if os.path.exists(evaluation_results['cm_gender']):
-                        st.image(evaluation_results['cm_gender'], caption="Confusion Matrix - Gender",
-                                 use_column_width=True)
-                    else:
-                        st.error(f"Gender confusion matrix not found: {evaluation_results['cm_gender']}")
-            else:
-                st.error("Evaluation failed. Check dataset files or logs.")
-        else:
-            st.error("Training failed. Check dataset files or logs.")
-
-
-def preprocess_page():
-    st.header("Preprocess Datasets")
-    st.write("Process all CSV files in Dataset/CSV/Raw/ and save to Dataset/CSV/Processed/processed_dataset.csv.")
-
-    if st.button("Start Preprocessing"):
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        # Create a log container and summary placeholder
-        log_container = st.empty()
-        summary_placeholder = st.empty()
-        log_buffer = []
-
-        # Custom logging handler to capture logs and summary
-        class StreamlitHandler(logging.Handler):
-            def __init__(self):
-                super().__init__()
-                self.summary = None
-
-            def emit(self, record):
-                msg = self.format(record)
-                log_buffer.append(msg)
-                log_container.text_area("Preprocessing Logs", "\n".join(log_buffer), height=300)
-                # Capture summary log
-                if "Preprocessing Summary" in msg:
-                    self.summary = msg.split(" - INFO - ")[-1]
-                    summary_placeholder.info(f"**Preprocessing Summary**\n\n{self.summary}")
-
-        # Configure logging to Streamlit
-        handler = StreamlitHandler()
-        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-        logger.addHandler(handler)
-
-        try:
-            raw_csv_dir = '../Dataset/CSV/Raw'
-            image_dir = '../Dataset/Image'
-            output_csv = '../Dataset/CSV/Processed/processed_dataset.csv'
-            output_dir = '../Dataset/Model_Output'
-
-            if not os.path.exists(raw_csv_dir) or not os.path.exists(image_dir):
-                st.error(f"Required directories not found: {raw_csv_dir} or {image_dir}")
-                logger.error(f"Required directories not found: {raw_csv_dir} or {image_dir}")
-                return
-
-            # Process CSVs
-            logger.info("Starting preprocessing of CSV files...")
-            preprocess_all_datasets(raw_csv_dir, image_dir, output_csv)
-
-            # Update progress
-            progress_bar.progress(0.5)
-            logger.info("Preprocessing complete. Normalizing and splitting data...")
-
-            # Normalize and split
-            normalize_and_split_data(output_csv, output_dir)
-
-            progress_bar.progress(1.0)
-            st.success(f"Preprocessing completed! Data saved to {output_csv} and splits saved to {output_dir}")
-
-        except Exception as e:
-            logger.error(f"Error during preprocessing: {str(e)}")
-            st.error(f"Error during preprocessing: {str(e)}")
-
-        finally:
-            logger.removeHandler(handler)
-
-
 def main():
     st.title("Facial Analysis System")
     st.sidebar.title("Navigation")
     page = st.sidebar.selectbox("Choose a page",
-                                ["Real-Time Detection", "Add Dataset", "Train Model", "Preprocess Datasets"])
+                                ["Home", "Add Dataset",  "Preprocess Datasets", "Train Model", "Real-Time Detection"])
 
-    if page == "Real-Time Detection":
-        real_time_detection()
+    if page == "Home":
+        home_page()
     elif page == "Add Dataset":
         add_dataset()
-    elif page == "Train Model":
-        train_model_page()
     elif page == "Preprocess Datasets":
         preprocess_page()
+    elif page == "Train Model":
+        train_model_page()
+    elif page == "Real-Time Detection":
+        real_time_detection()
 
     mp_face_mesh.close()
 

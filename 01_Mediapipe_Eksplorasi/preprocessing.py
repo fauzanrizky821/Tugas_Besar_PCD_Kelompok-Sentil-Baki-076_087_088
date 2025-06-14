@@ -198,7 +198,7 @@ if __name__ == "__main__":
     raw_csv_dir = "../Dataset/CSV/Raw"
     image_dir = "../Dataset/Image"
     output_csv = "../Dataset/CSV/Processed/processed_dataset.csv"
-    output_dir = "../Dataset/Model_Output"
+    output_dir = "../Dataset/Training_Data"
 
     preprocess_all_datasets(raw_csv_dir, image_dir, output_csv)
     normalize_and_split_data(output_csv, output_dir)
