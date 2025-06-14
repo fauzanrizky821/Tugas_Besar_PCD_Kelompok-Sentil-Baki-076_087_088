@@ -21,10 +21,6 @@ build/
 # Datasets
 Dataset/Image/*
 !Dataset/Image/.gitkeep
-Dataset/CSV/Raw/*
-!Dataset/CSV/Raw/.gitkeep
-Dataset/CSV/Processed/*
-!Dataset/CSV/Processed/.gitkeep
 Dataset/Training_Data/*
 !Dataset/Training_Data/.gitkeep
 
