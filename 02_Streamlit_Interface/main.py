@@ -97,8 +97,8 @@ def home_page():
         (pria, wanita) berdasarkan landmark wajah yang diekstraksi dari gambar.
 
         Aplikasi ini cocok untuk keperluan akademik, penelitian, atau pengembangan teknologi pengenalan wajah. Anda dapat 
-        menambahkan dataset baru, memproses data, melatih model, dan melakukan analisis wajah secara real-time menggunakan 
-        webcam.
+        menambahkan dataset baru, memproses data, melatih model, melakukan analisis wajah secara real-time menggunakan 
+        webcam, atau menganalisis gambar yang diunggah.
 
         ### Alur Penggunaan Aplikasi
         Untuk hasil terbaik, ikuti langkah-langkah berikut:
@@ -122,16 +122,23 @@ def home_page():
            - Model yang dilatih akan disimpan di `01_Mediapipe_Eksplorasi/Model/model.h5`.
 
         4. **Analisis Wajah Real-Time (Real-Time Detection)**:
-           - Setelah model dilatih, gunakan halaman **Analisis Wajah Real-Time** untuk memprediksi usia, ekspresi, dan 
-             jenis kelamin secara langsung melalui webcam.
-           - Hasil prediksi akan ditampilkan pada kotak pembatas (bounding box) di sekitar wajah yang terdeteksi.
+           - Gunakan halaman **Analisis Wajah Real-Time** untuk memprediksi usia, ekspresi, dan jenis kelamin secara langsung 
+             melalui webcam.
+           - Hasil prediksi dan landmark wajah akan ditampilkan pada kotak pembatas di sekitar wajah yang terdeteksi.
+
+        5. **Analisis Gambar (Analyze Image)**:
+           - Gunakan halaman **Analisis Gambar** untuk mengunggah file gambar (.jpg atau .png) dan mendeteksi fitur wajah.
+           - Gambar akan menampilkan landmark wajah, kotak pembatas, dan prediksi usia, ekspresi, dan jenis kelamin, baik pada 
+             gambar maupun sebagai teks di bawahnya.
 
         ### Catatan Penting
         - Pastikan folder `Dataset/Image/` berisi gambar yang sesuai dengan ID di `dataset.csv`.
+        - Proses pelatihan membutuhkan data yang cukup (misalnya, 348 entri seperti hasil pratinjau sebelumnya).
         - Jika terjadi error, periksa log di halaman **Pratinjau Dataset** atau pastikan semua dependensi terinstall 
           (`requirements.txt`).
         - Untuk hasil optimal, gunakan gambar wajah dengan pencahayaan baik dan tanpa penghalang.
 
+        **Mulai sekarang dengan menavigasi ke halaman "Tambah Dataset" atau "Analisis Gambar" melalui menu di sisi kiri!**
     """)
 
 
@@ -420,11 +427,95 @@ def real_time_detection():
     cap.release()
 
 
+def analyze_image():
+    st.header("Analyze Image")
+    st.write("Upload an image to detect facial features (age, expression, gender) and display landmarks.")
+
+    model_path = '../01_Mediapipe_Eksplorasi/Model/model.h5'
+    encoder_dir = '../Dataset/Training_Data'
+    model, le_age, le_expression, le_gender = load_model_and_encoders(model_path, encoder_dir)
+    if model is None:
+        return
+
+    # Load normalization parameters
+    processed_csv = '../Dataset/CSV/Processed/processed_dataset.csv'
+    if os.path.exists(processed_csv):
+        df = pd.read_csv(processed_csv)
+        mean = df.iloc[:, :-3].values.mean(axis=0)
+        std = df.iloc[:, :-3].values.std(axis=0)
+    else:
+        st.error("Processed dataset not found for normalization.")
+        return
+
+    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "png"])
+    if uploaded_file:
+        # Read and display uploaded image
+        image = np.array(Image.open(uploaded_file))
+        st.image(image, caption="Uploaded Image", use_column_width=True)
+
+        # Process image
+        landmarks, face_landmarks = extract_landmarks(image, mp_face_mesh)
+
+        if landmarks is not None:
+            # Draw face landmarks
+            mp_drawing.draw_landmarks(
+                image=image,
+                landmark_list=face_landmarks,
+                connections=mp_face.FACEMESH_TESSELATION,
+                landmark_drawing_spec=None,
+                connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_tesselation_style()
+            )
+            mp_drawing.draw_landmarks(
+                image=image,
+                landmark_list=face_landmarks,
+                connections=mp_face.FACEMESH_CONTOURS,
+                landmark_drawing_spec=None,
+                connection_drawing_spec=mp_drawing_styles.get_default_face_mesh_contours_style()
+            )
+
+            # Normalize landmarks and predict
+            landmarks = (landmarks - mean) / std
+            landmarks = landmarks.reshape(1, -1)
+
+            age_pred, exp_pred, gen_pred = model.predict(landmarks, verbose=0)
+            age_label = le_age.inverse_transform([np.argmax(age_pred, axis=1)[0]])[0]
+            exp_label = le_expression.inverse_transform([np.argmax(exp_pred, axis=1)[0]])[0]
+            gen_label = le_gender.inverse_transform([np.argmax(gen_pred, axis=1)[0]])[0]
+
+            bbox = get_bounding_box(image, face_landmarks)
+            if bbox:
+                x_min, y_min, x_max, y_max = bbox
+                cv2.rectangle(image, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+                cv2.putText(image, f"Age: {age_label}", (x_min, y_min - 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0),
+                            2)
+                cv2.putText(image, f"Expression: {exp_label}", (x_min, y_min - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                            (0, 255, 0), 2)
+                cv2.putText(image, f"Gender: {gen_label}", (x_min, y_min - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                            (0, 255, 0), 2)
+
+            # Display processed image
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            st.image(image_rgb, caption="Processed Image with Landmarks and Predictions", use_column_width=True)
+
+            # Display prediction text below the image
+            st.markdown(f"""
+                **Detected Features:**
+                ```
+                AGE: {age_label}
+                EXPRESSION: {exp_label}
+                GENDER: {gen_label}
+                ```
+            """)
+        else:
+            st.error("No face detected in the image.")
+
+
 def main():
     st.title("Facial Analysis System")
     st.sidebar.title("Navigation")
     page = st.sidebar.selectbox("Choose a page",
-                                ["Home", "Add Dataset", "Preprocess Datasets", "Train Model", "Real-Time Detection"])
+                                ["Home", "Add Dataset", "Preprocess Datasets", "Train Model", "Real-Time Detection",
+                                 "Analyze Image"])
 
     if page == "Home":
         home_page()
@@ -436,6 +527,8 @@ def main():
         train_model_page()
     elif page == "Real-Time Detection":
         real_time_detection()
+    elif page == "Analyze Image":
+        analyze_image()
 
     mp_face_mesh.close()
 
