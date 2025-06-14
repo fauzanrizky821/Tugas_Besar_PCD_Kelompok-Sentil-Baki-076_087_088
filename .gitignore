@@ -21,8 +21,6 @@ build/
 # Datasets
 Dataset/Image/*
 !Dataset/Image/.gitkeep
-Dataset/Training_Data/*
-!Dataset/Training_Data/.gitkeep
 
 # Model and evaluation outputs
 01_Mediapipe_Eksplorasi/Model/*
