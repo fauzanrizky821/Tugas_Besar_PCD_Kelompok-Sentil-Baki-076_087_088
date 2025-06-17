@@ -1,86 +1,89 @@
 import pickle
-
 import numpy as np
 import tensorflow as tf
 import pandas as pd
 import os
-from model import create_cnn_model
-
+from model import create_mlp_model
+from tensorflow.keras.callbacks import EarlyStopping
 
 def train_model(data_dir, output_dir, epochs=50, batch_size=32, callbacks=None):
-    """Train the multi-output CNN model on processed datasets."""
-    # Load data from both processed_dataset.csv and captured_processed_dataset.csv
-    processed_csv = os.path.join(data_dir, 'processed_dataset.csv')
-    captured_csv = os.path.join(data_dir, 'captured_processed_dataset.csv')
-
-    dfs = []
-    for csv_file in [processed_csv, captured_csv]:
-        if os.path.exists(csv_file):
-            df = pd.read_csv(csv_file)
-            dfs.append(df)
-        else:
-            print(f"Warning: {csv_file} not found.")
-
-    if not dfs:
-        print("Error: No valid datasets found.")
+    """Train the multi-output MLP model on processed datasets."""
+    # Load data from NumPy arrays
+    try:
+        X_train = np.load(os.path.join(data_dir, 'X_train.npy'))
+        X_val = np.load(os.path.join(data_dir, 'X_val.npy'))
+        y_age_train = np.load(os.path.join(data_dir, 'y_age_train.npy'))
+        y_age_val = np.load(os.path.join(data_dir, 'y_age_val.npy'))
+        y_exp_train = np.load(os.path.join(data_dir, 'y_exp_train.npy'))
+        y_exp_val = np.load(os.path.join(data_dir, 'y_exp_val.npy'))
+        y_gen_train = np.load(os.path.join(data_dir, 'y_gen_train.npy'))
+        y_gen_val = np.load(os.path.join(data_dir, 'y_gen_val.npy'))
+    except Exception as e:
+        print(f"Error loading data: {str(e)}")
         return None
 
-    df = pd.concat(dfs, ignore_index=True)
+    # Create model
+    try:
+        model = create_mlp_model()
+    except Exception as e:
+        print(f"Error creating model: {str(e)}")
+        return None
 
-    # Prepare data
-    X = df.iloc[:, :-3].values
-    y_age = df['age_label'].values
-    y_expression = df['expression_label'].values
-    y_gender = df['gender_label'].values
-
-    # Normalize features
-    X = (X - X.mean(axis=0)) / X.std(axis=0)
-
-    # Load label encoders
-    from sklearn.preprocessing import LabelEncoder
-    le_age = LabelEncoder()
-    le_expression = LabelEncoder()
-    le_gender = LabelEncoder()
-
-    y_age = le_age.fit_transform(y_age)
-    y_expression = le_expression.fit_transform(y_expression)
-    y_gender = le_gender.fit_transform(y_gender)
-
-    # Split data
-    from sklearn.model_selection import train_test_split
-    X_train, X_val, y_age_train, y_age_val, y_exp_train, y_exp_val, y_gen_train, y_gen_val = train_test_split(
-        X, y_age, y_expression, y_gender, test_size=0.2, random_state=42
+    # Define EarlyStopping
+    early_stopping = EarlyStopping(
+        monitor='val_loss',
+        patience=10,
+        restore_best_weights=True
     )
 
-    # Create model
-    model = create_cnn_model()
+    # Combine callbacks
+    callbacks = callbacks or []
+    callbacks.append(early_stopping)
 
     # Train model
-    history = model.fit(
-        X_train,
-        {'age_output': y_age_train, 'exp_output': y_exp_train, 'gen_output': y_gen_train},
-        validation_data=(X_val, {'age_output': y_age_val, 'exp_output': y_exp_val, 'gen_output': y_gen_val}),
-        epochs=epochs,
-        batch_size=batch_size,
-        verbose=0,  # Suppress default output for custom callback
-        callbacks=callbacks or []
-    )
+    try:
+        history = model.fit(
+            X_train,
+            {'age_output': y_age_train, 'exp_output': y_exp_train, 'gen_output': y_gen_train},
+            validation_data=(X_val, {'age_output': y_age_val, 'exp_output': y_exp_val, 'gen_output': y_gen_val}),
+            epochs=epochs,
+            batch_size=batch_size,
+            verbose=0,
+            callbacks=callbacks
+        )
+    except Exception as e:
+        print(f"Error during training: {str(e)}")
+        return None
 
     # Save model
     os.makedirs(output_dir, exist_ok=True)
-    model.save(os.path.join(output_dir, 'model.h5'))
+    try:
+        model.save(os.path.join(output_dir, 'model.h5'))
+    except Exception as e:
+        print(f"Error saving model: {str(e)}")
+        return None
 
-    # Save new label encoders
-    with open(os.path.join(data_dir, 'le_age.pkl'), 'wb') as f:
-        pickle.dump(le_age, f)
-    with open(os.path.join(data_dir, 'le_expression.pkl'), 'wb') as f:
-        pickle.dump(le_expression, f)
-    with open(os.path.join(data_dir, 'le_gender.pkl'), 'wb') as f:
-        pickle.dump(le_gender, f)
+    # Save label encoders with detailed error handling
+    encoder_files = ['le_age.pkl', 'le_expression.pkl', 'le_gender.pkl']
+    for encoder_file in encoder_files:
+        source_path = os.path.join(data_dir, encoder_file)
+        dest_path = os.path.join(data_dir, encoder_file)
+        if os.path.exists(source_path):
+            try:
+                with open(source_path, 'rb') as f_in:
+                    encoder_data = pickle.load(f_in)
+                with open(dest_path, 'wb') as f_out:
+                    pickle.dump(encoder_data, f_out)
+                print(f"Successfully saved {encoder_file} to {dest_path}")
+            except EOFError as e:
+                print(f"Warning: {encoder_file} is empty or corrupt: {str(e)}")
+            except Exception as e:
+                print(f"Error processing {encoder_file}: {str(e)}")
+        else:
+            print(f"Warning: {encoder_file} not found at {source_path}")
 
     print(f"Model saved to {output_dir}/model.h5")
     return history
-
 
 if __name__ == "__main__":
     train_model('../Dataset/Training_Data', '../01_Mediapipe_Eksplorasi/Model')

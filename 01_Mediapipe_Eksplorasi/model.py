@@ -1,25 +1,16 @@
 import tensorflow as tf
-from tensorflow.keras import layers, Model
+from tensorflow.keras import layers, Model, regularizers
 
-
-def create_cnn_model(input_shape=(1404,), num_classes_age=3, num_classes_exp=4, num_classes_gen=2):
-    """Create a multi-output CNN model for age, expression, and gender classification."""
+def create_mlp_model(input_shape=(1404,), num_classes_age=3, num_classes_exp=4, num_classes_gen=2):
+    """Create a multi-output MLP model for age, expression, and gender classification."""
     inputs = layers.Input(shape=input_shape)
 
-    x = layers.Reshape((input_shape[0], 1))(inputs)
-
-    x = layers.Conv1D(64, kernel_size=3, activation='relu', padding='same')(x)
-    x = layers.MaxPooling1D(pool_size=2)(x)
-    x = layers.Conv1D(128, kernel_size=3, activation='relu', padding='same')(x)
-    x = layers.MaxPooling1D(pool_size=2)(x)
-    x = layers.Conv1D(256, kernel_size=3, activation='relu', padding='same')(x)
-    x = layers.MaxPooling1D(pool_size=2)(x)
-
-    x = layers.Flatten()(x)
-    x = layers.Dense(512, activation='relu')(x)
-    x = layers.Dropout(0.5)(x)
-    x = layers.Dense(256, activation='relu')(x)
-    x = layers.Dropout(0.5)(x)
+    x = layers.Dense(512, activation='relu', kernel_regularizer=regularizers.l2(0.01))(inputs)
+    x = layers.Dropout(0.3)(x)
+    x = layers.Dense(256, activation='relu', kernel_regularizer=regularizers.l2(0.01))(x)
+    x = layers.Dropout(0.3)(x)
+    x = layers.Dense(128, activation='relu', kernel_regularizer=regularizers.l2(0.01))(x)
+    x = layers.Dropout(0.3)(x)
 
     age_output = layers.Dense(num_classes_age, activation='softmax', name='age_output')(x)
     exp_output = layers.Dense(num_classes_exp, activation='softmax', name='exp_output')(x)
@@ -43,7 +34,6 @@ def create_cnn_model(input_shape=(1404,), num_classes_age=3, num_classes_exp=4, 
 
     return model
 
-
 if __name__ == "__main__":
-    model = create_cnn_model()
+    model = create_mlp_model()
     model.summary()

@@ -51,6 +51,25 @@ def load_model_and_encoders(model_path, encoder_dir):
         return None, None, None, None
 
 
+def center_and_scale_landmarks(landmarks, nose_idx=1, eye_left_idx=33, eye_right_idx=263):
+    """Center landmarks relative to nose and scale based on inter-eye distance."""
+    try:
+        landmarks = np.array(landmarks).reshape(-1, 3)  # Shape: (468, 3)
+        nose = landmarks[nose_idx]
+        landmarks_centered = landmarks - nose
+        eye_left = landmarks[eye_left_idx]
+        eye_right = landmarks[eye_right_idx]
+        inter_eye_distance = np.linalg.norm(eye_left[:2] - eye_right[:2])
+        if inter_eye_distance > 0:
+            landmarks_scaled = landmarks_centered / inter_eye_distance
+        else:
+            landmarks_scaled = landmarks_centered
+        return landmarks_scaled.flatten()
+    except Exception as e:
+        logger.error(f"Error in centering and scaling landmarks: {str(e)}")
+        return None
+
+
 def extract_landmarks(image, mp_face_mesh):
     """Extract 468 face landmarks from an image."""
     try:
@@ -62,6 +81,10 @@ def extract_landmarks(image, mp_face_mesh):
             landmark_vector = []
             for lm in landmarks:
                 landmark_vector.extend([lm.x, lm.y, lm.z])
+            # Center and scale landmarks
+            landmark_vector = center_and_scale_landmarks(landmark_vector)
+            if landmark_vector is None:
+                return None, None
             return np.array(landmark_vector), results.multi_face_landmarks[0]
         return None, None
     except Exception as e:
@@ -92,53 +115,50 @@ def home_page():
     st.markdown("""
         ### Tentang Aplikasi
         Sistem Analisis Wajah adalah aplikasi berbasis kecerdasan buatan yang dirancang untuk menganalisis gambar wajah 
-        menggunakan teknologi **MediaPipe Face Mesh** dan model pembelajaran mendalam (deep learning). Aplikasi ini mampu 
+        menggunakan teknologi **MediaPipe Face Mesh** dan model **Multilayer Perceptron (MLP)**. Aplikasi ini mampu 
         memprediksi **usia** (muda, menengah, tua), **ekspresi wajah** (senang, sedih, marah, netral), serta **jenis kelamin** 
-        (pria, wanita) berdasarkan landmark wajah yang diekstraksi dari gambar.
+        (pria, wanita) berdasarkan 468 landmark wajah yang diekstraksi dari gambar.
 
-        Aplikasi ini cocok untuk keperluan akademik, penelitian, atau pengembangan teknologi pengenalan wajah. Anda dapat 
-        menambahkan dataset baru, memproses data, melatih model, melakukan analisis wajah secara real-time menggunakan 
-        webcam, atau menganalisis gambar yang diunggah.
+        ### Fitur Utama
+        - **Preprocessing Landmark**: Landmark dipusatkan ke titik hidung dan diskalakan berdasarkan jarak antar mata untuk 
+          menghilangkan pengaruh posisi wajah. Z-score normalization diterapkan untuk konsistensi.
+        - **Augmentasi Data**: Data dilipatgandakan dengan flip horizontal, penambahan noise ±1%, dan rotasi ±5° untuk 
+          meningkatkan variasi dan mencegah overfitting.
+        - **Regularisasi**: Model menggunakan Dropout (0.3), L2 regularization, dan EarlyStopping untuk performa optimal.
+        - **Evaluasi**: Model dievaluasi dengan accuracy, F1-score, precision, recall, dan confusion matrix untuk setiap label.
 
         ### Alur Penggunaan Aplikasi
         Untuk hasil terbaik, ikuti langkah-langkah berikut:
         1. **Tambah Dataset (Add Dataset)**:
-           - Mulai dari halaman **Tambah Dataset** untuk menambahkan gambar wajah baru.
-           - Anda dapat mengambil gambar menggunakan webcam atau mengunggah file gambar (.jpg atau .png).
-           - Berikan label untuk usia, ekspresi, dan jenis kelamin, lalu simpan ke dataset.
-           - Data akan disimpan di `captured_processed_dataset.csv` untuk digunakan dalam pelatihan.
+           - Tambahkan gambar wajah baru via webcam atau unggah file (.jpg/.png).
+           - Berikan label usia, ekspresi, dan jenis kelamin.
+           - Data disimpan di `captured_processed_dataset.csv`.
 
         2. **Pratinjau Dataset (Preprocess Datasets)**:
-           - Kunjungi halaman **Pratinjau Dataset** untuk memproses file CSV di `Dataset/CSV/Raw/` (misalnya, `dataset.csv`).
-           - Proses ini akan mengekstraksi landmark wajah dari gambar di `Dataset/Image/` dan menyimpan hasilnya di 
-             `processed_dataset.csv`.
-           - Data juga akan dinormalisasi dan dibagi menjadi set pelatihan, validasi, dan pengujian, disimpan di 
-             `Dataset/Training_Data/`.
+           - Proses file CSV di `Dataset/CSV/Raw/` untuk mengekstrak landmark dari gambar di `Dataset/Image/`.
+           - Hasil disimpan di `processed_dataset.csv` dengan augmentasi data.
+           - Data dinormalisasi dan dibagi ke set pelatihan, validasi, dan pengujian di `Dataset/Training_Data/`.
 
         3. **Latih Model (Train Model)**:
-           - Buka halaman **Latih Model** untuk melatih model menggunakan data yang telah diproses.
-           - Pantau proses pelatihan melalui grafik loss dan akurasi, serta lihat matriks kebingungan (confusion matrix) 
-             untuk mengevaluasi performa model pada usia, ekspresi, dan jenis kelamin.
-           - Model yang dilatih akan disimpan di `01_Mediapipe_Eksplorasi/Model/model.h5`.
+           - Latih model MLP menggunakan data yang diproses.
+           - Pantau loss, akurasi, dan metrika validasi. EarlyStopping menghentikan pelatihan jika tidak ada perbaikan.
+           - Model disimpan di `01_Mediapipe_Eksplorasi/Model/model.h5`.
 
-        4. **Analisis Wajah Real-Time (Real-Time Detection)**:
-           - Gunakan halaman **Analisis Wajah Real-Time** untuk memprediksi usia, ekspresi, dan jenis kelamin secara langsung 
-             melalui webcam.
-           - Hasil prediksi dan landmark wajah akan ditampilkan pada kotak pembatas di sekitar wajah yang terdeteksi.
+        4. **Analisis Real-Time (Real-Time Detection)**:
+           - Prediksi usia, ekspresi, dan jenis kelamin via webcam secara langsung.
+           - Tampilkan landmark wajah dan bounding box dengan teks hasil prediksi.
 
         5. **Analisis Gambar (Analyze Image)**:
-           - Gunakan halaman **Analisis Gambar** untuk mengunggah file gambar (.jpg atau .png) dan mendeteksi fitur wajah.
-           - Gambar akan menampilkan landmark wajah, kotak pembatas, dan prediksi usia, ekspresi, dan jenis kelamin, baik pada 
-             gambar maupun sebagai teks di bawahnya.
+           - Unggah gambar untuk deteksi fitur wajah.
+           - Tampilkan landmark, bounding box, dan prediksi (pada gambar dan teks di bawahnya).
 
         ### Catatan Penting
-        - Pastikan folder `Dataset/Image/` berisi gambar yang sesuai dengan ID di `dataset.csv`.
-        - Proses pelatihan membutuhkan data yang cukup (misalnya, 348 entri seperti hasil pratinjau sebelumnya).
-        - Jika terjadi error, periksa log di halaman **Pratinjau Dataset** atau pastikan semua dependensi terinstall 
-          (`requirements.txt`).
-        - Untuk hasil optimal, gunakan gambar wajah dengan pencahayaan baik dan tanpa penghalang.
+        - Pastikan folder `Dataset/Image/` berisi gambar sesuai ID di `dataset.csv`.
+        - Dataset minimum ~348 entri (dengan augmentasi menjadi ~1392 entri).
+        - Periksa log di **Preprocess Datasets** untuk debugging.
+        - Gunakan gambar wajah dengan pencahayaan baik untuk hasil optimal.
 
-        **Mulai sekarang dengan menavigasi ke halaman "Tambah Dataset" atau "Analisis Gambar" melalui menu di sisi kiri!**
+        **Mulai sekarang dengan menavigasi ke halaman "Tambah Dataset" atau "Analisis Gambar" di sidebar kiri!**
     """)
 
 
@@ -206,8 +226,8 @@ def preprocess_page():
         status_text = st.empty()
 
         # Create a log container and summary placeholder
-        log_container = st.empty()
-        summary_placeholder = st.empty()
+        log_container = st.empty_container()
+        summary_placeholder = st.empty_container()
         log_buffer = []
 
         # Custom logging handler to capture logs and summary
@@ -241,13 +261,13 @@ def preprocess_page():
                 logger.error(f"Required directories not found: {raw_csv_dir} or {image_dir}")
                 return
 
-            # Process CSVs
+            # Process images
             logger.info("Starting preprocessing of CSV files...")
             preprocess_all_datasets(raw_csv_dir, image_dir, output_csv)
 
             # Update progress
             progress_bar.progress(0.5)
-            logger.info("Preprocessing complete. Normalizing and splitting data...")
+            logger.info("Preprocessing completed. Normalizing and splitting data...")
 
             # Normalize and split
             normalize_and_split_data(output_csv, output_dir)
@@ -264,8 +284,8 @@ def preprocess_page():
 
 
 def train_model_page():
-    st.header("Train Model")
-    st.write("Train the model using processed_dataset.csv and captured_processed_dataset.csv.")
+    st.header("Model Training")
+    st.write("Train the MLP model using processed_dataset.csv and captured_processed_dataset.csv.")
 
     if st.button("Start Training"):
         progress_bar = st.progress(0)
@@ -292,7 +312,7 @@ def train_model_page():
 
         # Train model
         history = train_model(
-            '../Dataset/CSV/Processed',
+            '../Dataset/Training_Data',
             '../01_Mediapipe_Eksplorasi/Model',
             epochs=50,
             batch_size=32,
@@ -310,7 +330,7 @@ def train_model_page():
                 'Gender Accuracy': history.history['gen_output_accuracy']
             })
 
-            # Evaluate model and display confusion matrices
+            # Evaluate model and display confusion matrix
             st.write("### Confusion Matrices")
             evaluation_results = evaluate_model(
                 '../01_Mediapipe_Eksplorasi/Model/model.h5',
@@ -319,7 +339,11 @@ def train_model_page():
             )
 
             if evaluation_results:
-                st.success("Evaluation completed! Displaying confusion matrices...")
+                st.success("Evaluation completed! Displaying results...")
+                st.write("### Metrics")
+                if os.path.exists(evaluation_results['metrics']):
+                    with open(evaluation_results['metrics'], 'r') as f:
+                        st.text(f.read())
                 col1, col2, col3 = st.columns(3)
                 with col1:
                     if os.path.exists(evaluation_results['cm_age']):
@@ -500,11 +524,9 @@ def analyze_image():
             # Display prediction text below the image
             st.markdown(f"""
                 **Detected Features:**
-                ```
-                AGE: {age_label}
-                EXPRESSION: {exp_label}
-                GENDER: {gen_label}
-                ```
+                - AGE: {age_label}
+                - EXPRESSION: {exp_label}
+                - GENDER: {gen_label}
             """)
         else:
             st.error("No face detected in the image.")
