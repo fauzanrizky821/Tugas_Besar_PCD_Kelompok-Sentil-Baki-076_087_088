@@ -208,15 +208,24 @@ def preprocess_all_datasets(raw_csv_dir, image_dir, output_csv):
     if mp_face_mesh:
         mp_face_mesh.close()
 
-def normalize_and_split_data(csv_path, output_dir, val_split=0.2, test_split=0.1):
-    """Normalize data and split into train/val/test sets."""
+def normalize_and_split_data(csv_path, captured_csv_path, output_dir, val_split=0.2, test_split=0.1):
+    """Normalize data from both processed_dataset.csv and captured_processed_dataset.csv and split into train/val/test sets."""
     try:
+        # Load both CSV files
         if not os.path.exists(csv_path):
             logger.error(f"CSV file not found: {csv_path}")
             return
-        df = pd.read_csv(csv_path)
+        if not os.path.exists(captured_csv_path):
+            logger.warning(f"captured_processed_dataset.csv not found: {captured_csv_path}, proceeding with {csv_path} only")
+            df = pd.read_csv(csv_path)
+        else:
+            df1 = pd.read_csv(csv_path)
+            df2 = pd.read_csv(captured_csv_path)
+            df = pd.concat([df1, df2], ignore_index=True)
+            logger.info(f"Combined data from {csv_path} and {captured_csv_path}, total rows: {len(df)}")
+
         if df.empty:
-            logger.error(f"{csv_path} is empty")
+            logger.error(f"Combined CSV data is empty")
             return
 
         X = df.iloc[:, :-3].values
@@ -277,7 +286,8 @@ if __name__ == "__main__":
     raw_csv_dir = "../Dataset/CSV/Raw"
     image_dir = "../Dataset/Image"
     output_csv = "../Dataset/CSV/Processed/processed_dataset.csv"
+    captured_csv = "../Dataset/CSV/Processed/captured_processed_dataset.csv"
     output_dir = "../Dataset/Training_Data"
 
     preprocess_all_datasets(raw_csv_dir, image_dir, output_csv)
-    normalize_and_split_data(output_csv, output_dir)
+    normalize_and_split_data(output_csv, captured_csv, output_dir)
